@@ -2,15 +2,13 @@ name: OuterLimits Daily
 
 on:
   schedule:
-    - cron: "55 7 * * 1-5"   # 08:55 UK on weekdays
-    - cron: "0 12 * * 1-5"   # 12:00 UK on weekdays (midday check)
+    - cron: "55 7 * * 1-5"   # 08:55 UK
+    - cron: "0 12 * * 1-5"   # 12:00 UK
   workflow_dispatch: {}
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -19,10 +17,15 @@ jobs:
         with:
           node-version: 20
 
+      - name: Show Node & env
+        run: |
+          node -v
+          echo "BASE set? ${{ secrets.T212_BASE != '' }}"
+          echo "API set?  ${{ secrets.T212_API_KEY != '' }}"
+          echo "SMTP set? ${{ secrets.SMTP_HOST != '' && secrets.SMTP_USER != '' && secrets.SMTP_PASS != '' && secrets.EMAIL_TO != '' }}"
+
       - name: Install deps
-        run: npm ci
-        env:
-          CI: "true"
+        run: npm install
 
       - name: Run watcher
         run: node index.js
