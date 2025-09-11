@@ -56,6 +56,12 @@ function pickPie(pies, keyword) {
   return pies.find(p => ((p?.settings?.name || p?.name || "").toLowerCase().includes(k)));
 }
 
+// ---- Transactions fetch (fixed) -----------------------
+async function getRecentTxns(limit = 50) {
+  // No 'time' param: API returns latest page (max 50)
+  return jget(`/api/v0/history/transactions?limit=${limit}`);
+}
+
 function buildRecommendations(m) {
   const recs = [];
   if (m.aiPct > CFG.driftMaxPct) {
@@ -111,9 +117,15 @@ async function sendEmail(subject, body) {
   const pies = await jget("/api/v0/equity/pies");
   console.log("📊 Pies detected:", (pies||[]).map(p => p?.settings?.name || p?.name));
 
-  const sinceIso = new Date(Date.now() - CFG.lookbackHours*3600*1000).toISOString();
-  const txns = await jget(`/api/v0/history/transactions?time=${encodeURIComponent(sinceIso)}&limit=50`);
+  const sinceMs = Date.now() - CFG.lookbackHours*3600*1000;
+  const txns = await getRecentTxns(50);
 
+  // Filter transactions within last 24h
+  const itemsRaw = txns.items || txns || [];
+  const items = itemsRaw.filter(t => {
+    const ts = new Date(t.time || t.timestamp || t.createdAt || t.date || 0).getTime();
+    return Number.isFinite(ts) && ts >= sinceMs;
+  });
 
   const ai = pickPie(pies, "ai");
   const ol = pickPie(pies, "outerlimits");
@@ -130,7 +142,6 @@ async function sendEmail(subject, body) {
   const aiMove = (ai?.result?.priceAvgResultCoef != null) ? ai.result.priceAvgResultCoef * 100 : null;
   const olMove = (ol?.result?.priceAvgResultCoef != null) ? ol.result.priceAvgResultCoef * 100 : null;
 
-  const items = txns.items || txns || [];
   const flow = items.reduce((s,t) => {
     const type = t?.type || "";
     const amt = num(t?.amount);
