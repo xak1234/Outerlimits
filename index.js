@@ -112,7 +112,8 @@ async function sendEmail(subject, body) {
   console.log("📊 Pies detected:", (pies||[]).map(p => p?.settings?.name || p?.name));
 
   const sinceIso = new Date(Date.now() - CFG.lookbackHours*3600*1000).toISOString();
-  const txns = await jget(`/api/v0/history/transactions?time=${encodeURIComponent(sinceIso)}&limit=100`);
+  const txns = await jget(`/api/v0/history/transactions?time=${encodeURIComponent(sinceIso)}&limit=50`);
+
 
   const ai = pickPie(pies, "ai");
   const ol = pickPie(pies, "outerlimits");
