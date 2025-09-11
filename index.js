@@ -5,14 +5,15 @@ import nodemailer from "nodemailer";
 
 // ---- Config (tweak thresholds here) --------------------
 const CFG = {
-  driftMaxPct: 60,          // max % any single pie should occupy (target 60/40 cap)
+  driftMaxPct: 60,          // max % any single pie should occupy
   moveAlertPct: 2,          // daily move alert (±%)
   buyDipPct: -3,            // recommend top-up if daily move <= this
-  considerSkimPct: 5,       // consider skimming if daily move >= this
+  considerSkimPct: 5,       // suggest skimming if daily move >= this
   cashFlowAbsLimit: 200,    // alert if |cash flow 24h| > this
   lookbackHours: 24
 };
 
+// ---- Env secrets ---------------------------------------
 const BASE = process.env.T212_BASE;
 const KEY  = process.env.T212_API_KEY;
 
@@ -23,73 +24,66 @@ const SMTP_PASS = process.env.SMTP_PASS;
 const EMAIL_FROM = process.env.EMAIL_FROM || SMTP_USER;
 const EMAIL_TO   = process.env.EMAIL_TO || SMTP_USER;
 
+// ---- Sanity checks -------------------------------------
 if (!BASE || !KEY) {
-  console.error("Missing T212_BASE or T212_API_KEY.");
+  console.error("❌ Missing T212_BASE or T212_API_KEY. Check repo secrets.");
   process.exit(1);
 }
 if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS || !EMAIL_TO) {
-  console.error("Missing SMTP_* or EMAIL_* secrets.");
+  console.error("❌ Missing SMTP_* or EMAIL_* secrets. Check repo secrets.");
   process.exit(1);
 }
 
 // ---- Helpers ------------------------------------------
 async function jget(path) {
-  const r = await fetch(`${BASE}${path}`, {
-    headers: { Authorization: KEY, Accept: "application/json" },
-    redirect: "follow"
+  const url = `${BASE}${path}`;
+  const r = await fetch(url, {
+    headers: { Authorization: KEY, Accept: "application/json" }
   });
   if (!r.ok) {
     const txt = await r.text().catch(()=>"");
-    throw new Error(`${path} -> ${r.status} ${r.statusText}\n${txt}`);
+    throw new Error(`❌ API ${path} -> ${r.status} ${r.statusText}\n${txt}`);
   }
-  const ct = r.headers.get("content-type") || "";
-  return ct.includes("application/json") ? r.json() : {};
+  return r.json().catch(() => ({}));
 }
 
 const num = v => (typeof v === "number" && isFinite(v)) ? v : 0;
+const pct = (a,b) => b ? (a/b)*100 : 0;
+const fmtGBP = n => `£${n.toFixed(2)}`;
 
 function pickPie(pies, keyword) {
   const k = keyword.toLowerCase();
   return pies.find(p => ((p?.settings?.name || p?.name || "").toLowerCase().includes(k)));
 }
 
-function pct(a, b) { return b === 0 ? 0 : (a / b) * 100; }
-
-function fmtGBP(n) { return `£${n.toFixed(2)}`; }
-
 function buildRecommendations(m) {
   const recs = [];
-  // Allocation
   if (m.aiPct > CFG.driftMaxPct) {
-    recs.push(`AI is ${m.aiPct.toFixed(1)}% (> ${CFG.driftMaxPct}%). Prefer new contributions to OuterLimits until back near 55/45.`);
+    recs.push(`AI is ${m.aiPct.toFixed(1)}% (> ${CFG.driftMaxPct}%). Prefer new contributions to OuterLimits.`);
   } else if (m.olPct > CFG.driftMaxPct) {
-    recs.push(`OuterLimits is ${m.olPct.toFixed(1)}% (> ${CFG.driftMaxPct}%). Prefer new contributions to AI until ~55/45.`);
+    recs.push(`OuterLimits is ${m.olPct.toFixed(1)}% (> ${CFG.driftMaxPct}%). Prefer new contributions to AI.`);
   } else {
-    recs.push(`Allocation healthy at AI ${m.aiPct.toFixed(1)}% / OL ${m.olPct.toFixed(1)}%. Keep contributions split to preserve ~55/45.`);
+    recs.push(`Allocation healthy at AI ${m.aiPct.toFixed(1)}% / OL ${m.olPct.toFixed(1)}%.`);
   }
 
-  // Daily movement logic
   if (m.aiMove != null && m.aiMove <= CFG.buyDipPct) {
-    recs.push(`AI moved ${m.aiMove.toFixed(2)}% today → consider a **small top-up** if conviction holds.`);
+    recs.push(`AI moved ${m.aiMove.toFixed(2)}% → consider a small top-up.`);
   }
   if (m.olMove != null && m.olMove <= CFG.buyDipPct) {
-    recs.push(`OuterLimits moved ${m.olMove.toFixed(2)}% today → consider a **small top-up** (buy the dip).`);
+    recs.push(`OuterLimits moved ${m.olMove.toFixed(2)}% → consider a small top-up.`);
   }
   if (m.aiMove != null && m.aiMove >= CFG.considerSkimPct) {
-    recs.push(`AI popped ${m.aiMove.toFixed(2)}% → consider **light profit-skim** (optional).`);
+    recs.push(`AI jumped ${m.aiMove.toFixed(2)}% → optional light skim.`);
   }
   if (m.olMove != null && m.olMove >= CFG.considerSkimPct) {
-    recs.push(`OuterLimits popped ${m.olMove.toFixed(2)}% → consider **light profit-skim** (optional).`);
+    recs.push(`OuterLimits jumped ${m.olMove.toFixed(2)}% → optional light skim.`);
   }
 
-  // Cash flow
   if (Math.abs(m.flow) > CFG.cashFlowAbsLimit) {
-    recs.push(`Cash flow in last ${CFG.lookbackHours}h is ${fmtGBP(m.flow)} (>|£${CFG.cashFlowAbsLimit}|). Review recent deposits/withdrawals.`);
+    recs.push(`Cash flow ${fmtGBP(m.flow)} (> £${CFG.cashFlowAbsLimit}). Review deposits/withdrawals.`);
   }
 
-  // General
-  recs.push(`Maintain a £100–£300 cash buffer; otherwise let gains compound. Rebalance only if >${CFG.driftMaxPct}% cap breached.`);
-
+  recs.push(`Maintain £100–£300 cash buffer. Rebalance if >${CFG.driftMaxPct}% cap breached.`);
   return recs;
 }
 
@@ -111,13 +105,15 @@ async function sendEmail(subject, body) {
 
 // ---- Main ---------------------------------------------
 (async () => {
-  // Fetch data
-  const cash = await jget("/api/v0/equity/account/cash");   // free, invested, pieCash, total
-  const pies = await jget("/api/v0/equity/pies");           // array
+  console.log("📡 Connecting to T212:", BASE);
+
+  const cash = await jget("/api/v0/equity/account/cash");
+  const pies = await jget("/api/v0/equity/pies");
+  console.log("📊 Pies detected:", (pies||[]).map(p => p?.settings?.name || p?.name));
+
   const sinceIso = new Date(Date.now() - CFG.lookbackHours*3600*1000).toISOString();
   const txns = await jget(`/api/v0/history/transactions?time=${encodeURIComponent(sinceIso)}&limit=100`);
 
-  // Identify pies
   const ai = pickPie(pies, "ai");
   const ol = pickPie(pies, "outerlimits");
 
@@ -134,7 +130,7 @@ async function sendEmail(subject, body) {
   const olMove = (ol?.result?.priceAvgResultCoef != null) ? ol.result.priceAvgResultCoef * 100 : null;
 
   const items = txns.items || txns || [];
-  const flow = items.reduce((s, t) => {
+  const flow = items.reduce((s,t) => {
     const type = t?.type || "";
     const amt = num(t?.amount);
     if (type === "DEPOSIT") return s + amt;
@@ -144,26 +140,17 @@ async function sendEmail(subject, body) {
 
   const lines = [];
   lines.push(`Total: ${fmtGBP(total)}  |  Free cash: ${fmtGBP(freeCash)}`);
-  lines.push(`AI: ${fmtGBP(aiVal)} (${aiPct.toFixed(1)}%)  •  OuterLimits: ${fmtGBP(olVal)} (${olPct.toFixed(1)}%)`);
+  lines.push(`AI: ${fmtGBP(aiVal)} (${aiPct.toFixed(1)}%)  •  OL: ${fmtGBP(olVal)} (${olPct.toFixed(1)}%)`);
   lines.push(`Last ${CFG.lookbackHours}h cash flow: ${fmtGBP(flow)}`);
   if (aiMove != null || olMove != null) {
     lines.push(`Moves — AI: ${aiMove?.toFixed(2) ?? "n/a"}%, OL: ${olMove?.toFixed(2) ?? "n/a"}%`);
   }
 
-  // Alerts
   const alerts = [];
-  if (aiPct > CFG.driftMaxPct || olPct > CFG.driftMaxPct) {
-    alerts.push(`Allocation drift beyond ${CFG.driftMaxPct}% cap.`);
-  }
-  if (Math.abs(flow) > CFG.cashFlowAbsLimit) {
-    alerts.push(`Cash flow ${fmtGBP(flow)} (> £${CFG.cashFlowAbsLimit}).`);
-  }
-  if (aiMove != null && Math.abs(aiMove) >= CFG.moveAlertPct) {
-    alerts.push(`AI move ${aiMove.toFixed(2)}% (≥ ±${CFG.moveAlertPct}%).`);
-  }
-  if (olMove != null && Math.abs(olMove) >= CFG.moveAlertPct) {
-    alerts.push(`OL move ${olMove.toFixed(2)}% (≥ ±${CFG.moveAlertPct}%).`);
-  }
+  if (aiPct > CFG.driftMaxPct || olPct > CFG.driftMaxPct) alerts.push("Allocation drift.");
+  if (Math.abs(flow) > CFG.cashFlowAbsLimit) alerts.push("Large cash flow.");
+  if (aiMove != null && Math.abs(aiMove) >= CFG.moveAlertPct) alerts.push(`AI move ${aiMove.toFixed(2)}%.`);
+  if (olMove != null && Math.abs(olMove) >= CFG.moveAlertPct) alerts.push(`OL move ${olMove.toFixed(2)}%.`);
 
   const recs = buildRecommendations({ aiPct, olPct, aiMove, olMove, flow });
 
@@ -178,10 +165,10 @@ async function sendEmail(subject, body) {
     "💡 Recommendations:\n- " + recs.join("\n- ") + "\n";
 
   await sendEmail(subject, body);
-  console.log("Email sent.\n" + body);
+  console.log("✅ Email sent.\n" + body);
+
 })().catch(err => {
-  console.error(err);
-  // Try to notify via email even on error (best effort)
+  console.error("❌ Fatal error:", err);
   sendEmail(`OuterLimits • ERROR • ${new Date().toLocaleString("en-GB")}`, String(err))
     .catch(() => process.exit(1));
 });
