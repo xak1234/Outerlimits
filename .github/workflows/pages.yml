@@ -18,7 +18,8 @@ concurrency:
 
 jobs:
   build:
-    runs-on: self-hosted  # or 'ubuntu-latest' if you switch back to GH-hosted
+    runs-on: [self-hosted, outerlimits]
+
     steps:
       - uses: actions/checkout@v4
 
