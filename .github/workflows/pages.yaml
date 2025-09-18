@@ -1,0 +1,52 @@
+name: OuterLimits Pages
+
+on:
+  schedule:
+    - cron: "55 7 * * 1-5"     # 08:55 UK weekdays
+    - cron: "0 12 * * 1-5"     # 12:00 UK weekdays
+    - cron: "0 16 * * 5"       # 17:00 UK Fridays (weekly wrap)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write          # to deploy Pages
+  id-token: write       # to deploy Pages
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: [self-hosted, outerlimits]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm install
+
+      - name: Build dashboard
+        run: node pages.js
+        env:
+          T212_BASE: ${{ secrets.T212_BASE }}
+          T212_API_KEY: ${{ secrets.T212_API_KEY }}
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist   # <- pages.js writes dashboard here
+
+  deploy:
+    needs: build
+    runs-on: self-hosted
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
