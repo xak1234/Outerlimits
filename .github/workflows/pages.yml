@@ -2,15 +2,15 @@ name: OuterLimits Pages
 
 on:
   schedule:
-    - cron: "55 7 * * 1-5"     # 08:55 UK weekdays
-    - cron: "0 12 * * 1-5"     # 12:00 UK weekdays
-    - cron: "0 16 * * 5"       # 17:00 UK Fridays (weekly wrap)
+    - cron: "55 7 * * 1-5"
+    - cron: "0 12 * * 1-5"
+    - cron: "0 16 * * 5"
   workflow_dispatch: {}
 
 permissions:
   contents: read
-  pages: write          # to deploy Pages
-  id-token: write       # to deploy Pages
+  pages: write
+  id-token: write
 
 concurrency:
   group: "pages"
@@ -18,32 +18,25 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-
+    runs-on: self-hosted        # your runner builds the site
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install deps
-        run: npm install
-
+        with: { node-version: 20 }
+      - run: npm install
       - name: Build dashboard
         run: node pages.js
         env:
           T212_BASE: ${{ secrets.T212_BASE }}
           T212_API_KEY: ${{ secrets.T212_API_KEY }}
-
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./dist   # <- pages.js writes dashboard here
+          path: ./dist
 
   deploy:
     needs: build
-    runs-on: self-hosted
+    runs-on: ubuntu-latest       # let GitHub’s runner handle the deploy
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
