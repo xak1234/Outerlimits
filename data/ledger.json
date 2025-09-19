@@ -1,0 +1,11 @@
+{
+  "realised": 100,
+  "entries": [
+    {
+      "id": "WITHDRAW-undefined",
+      "type": "WITHDRAW",
+      "amount": 100,
+      "at": ""
+    }
+  ]
+}
